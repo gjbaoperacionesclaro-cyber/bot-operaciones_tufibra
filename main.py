@@ -2500,26 +2500,54 @@ def _a1(col: int, row: int) -> str:
     return f"{letters}{row}"
 
 
-def sheet_upsert(ws, index: Dict[str, int], key: str, row: Dict[str, Any], columns: List[str], key_cols: List[str]):
-    _ensure_headers(ws, columns)
-    col_map = _col_index_map(ws)
+def outbox_enqueue(sheet_name: str, op_type: str, dedupe_key: str, row: Dict[str, Any]):
+    now = now_utc()
+    row_json = json.dumps(row, ensure_ascii=False)
 
-    for kc in key_cols:
-        if kc not in col_map:
-            raise RuntimeError(f"Falta columna clave '{kc}' en hoja '{ws.title}'")
+    log.info(f"OUTBOX enqueue -> sheet={sheet_name} key={dedupe_key}")
 
-    values = row_to_values(row, columns)
+    with db() as conn:
+        existing = conn.execute(
+            """
+            SELECT outbox_id, status FROM sheet_outbox
+            WHERE sheet_name=? AND dedupe_key=? AND status IN ('PENDING','FAILED')
+            ORDER BY outbox_id DESC LIMIT 1
+            """,
+            (sheet_name, dedupe_key),
+        ).fetchone()
 
-    if key in index:
-        r = index[key]
-        start = _a1(1, r)
-        end = _a1(len(columns), r)
-        ws.update(f"{start}:{end}", [values], value_input_option="RAW")
-    else:
-        ws.append_row(values, value_input_option="RAW")
-        all_vals = ws.get_all_values()
-        index[key] = len(all_vals)
+        if existing:
+            conn.execute(
+                """
+                UPDATE sheet_outbox
+                SET row_json=?, op_type=?, status='PENDING', last_error=NULL, next_retry_at=NULL, updated_at=?
+                WHERE outbox_id=?
+                """,
+                (row_json, op_type, now, int(existing["outbox_id"])),
+            )
+            log.info(f"OUTBOX update -> outbox_id={int(existing['outbox_id'])} sheet={sheet_name}")
+        else:
+            conn.execute(
+                """
+                INSERT INTO sheet_outbox(
+                    sheet_name,
+                    op_type,
+                    dedupe_key,
+                    row_json,
+                    status,
+                    attempts,
+                    last_error,
+                    next_retry_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES(?, ?, ?, ?, 'PENDING', 0, NULL, NULL, ?, NULL)
+                """,
+                (sheet_name, op_type, dedupe_key, row_json, now),
+            )
+            log.info(f"OUTBOX insert -> sheet={sheet_name} key={dedupe_key}")
 
+        conn.commit()
 
 def _is_permanent_sheet_error(err: str) -> bool:
     low = err.lower()
