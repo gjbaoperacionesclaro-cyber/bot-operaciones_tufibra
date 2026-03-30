@@ -2502,6 +2502,12 @@ def _a1(col: int, row: int) -> str:
 
 def sheet_upsert(ws, index: Dict[str, int], key: str, row: Dict[str, Any], columns: List[str], key_cols: List[str]):
     _ensure_headers(ws, columns)
+
+    # Releer índice real de la hoja antes de decidir si actualiza o inserta
+    fresh_index = build_index(ws, key_cols)
+    index.clear()
+    index.update(fresh_index)
+
     col_map = _col_index_map(ws)
 
     for kc in key_cols:
@@ -2517,8 +2523,9 @@ def sheet_upsert(ws, index: Dict[str, int], key: str, row: Dict[str, Any], colum
         ws.update(f"{start}:{end}", [values], value_input_option="RAW")
     else:
         ws.append_row(values, value_input_option="RAW")
-        all_vals = ws.get_all_values()
-        index[key] = len(all_vals)
+        fresh_index = build_index(ws, key_cols)
+        index.clear()
+        index.update(fresh_index)
 
 
 def _is_permanent_sheet_error(err: str) -> bool:
