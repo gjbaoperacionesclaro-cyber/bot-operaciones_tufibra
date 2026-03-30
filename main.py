@@ -6000,7 +6000,7 @@ def main():
         load_tecnicos_cache(app)
 
         if app.job_queue:
-            app.job_queue.run_repeating(sheets_worker, interval=60, first=10)
+            app.job_queue.run_repeating(sheets_worker, interval=10, first=3)
             app.job_queue.run_repeating(refresh_config_jobs, interval=60, first=15)
 
         log.info("Sheets: conectado. Worker iniciado. Cache TECNICOS habilitado.")
